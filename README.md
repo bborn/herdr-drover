@@ -34,6 +34,12 @@ To do it by hand, copy `layouts/drover.json` to `~/.config/herdr-app/layouts/`, 
 The keys are for macOS only. On Linux or Windows, change `cmd` to `ctrl` and pick
 keys that don't clash with your terminal.
 
+## On your phone
+
+To check on your agents away from your desk, see [afkterm](https://github.com/bborn/afkterm).
+You can see your Herdr spaces and tabs on your phone over Tailscale and type into any terminal.
+Claude sessions are shown as a chat, and you can answer Claude's questions and permission prompts with buttons.
+
 ## Before you install
 
 Some of these mods run programs on your machine:
