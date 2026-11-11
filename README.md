@@ -2,7 +2,7 @@
 
 A Herdr layout for running many agents at once. Unnamed tabs are called by the title
 the agent set (Claude's "✳ Fix the login redirect" reads "Fix the login redirect"),
-the sidebar holds your spaces above an agent list grouped by what needs you, and a
+the sidebar holds your spaces above an agent list grouped by what needs you (hold a dragged file over an agent and it opens, like a folder in Finder), and a
 handful of keys make tabs behave the way they do in a browser.
 
 ![Drover](preview.png)
@@ -30,7 +30,8 @@ To do it by hand, copy `layouts/drover.json` to `~/.config/herdr-app/layouts/`, 
 | ⌘\\ | Put the keyboard back in the tab's terminal |
 | ⌘⇧\\ | Filter the agent list: `[space]`, `is:blocked`, `@machine` or any text |
 | ⌘⇧B | Show or hide the spaces list |
-| ⌃⌘R | Resize the focused pane: ← and → step it through 1/4, 1/3, 1/2, 2/3 and 3/4 of its split, = makes the tab's panes even, Esc closes |
+| ⌃⌘← / ⌃⌘→ | Make the focused pane smaller or larger, one step at a time: 1/4, 1/3, 1/2, 2/3, 3/4 of its split |
+| ⌃⌘= | Make every pane in the tab the same size |
 
 The keys are for macOS only. On Linux or Windows, change `cmd` to `ctrl` and pick
 keys that don't clash with your terminal.

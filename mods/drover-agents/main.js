@@ -40,6 +40,8 @@ function title(tab, l) {
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
 }
 const EMOJI = /^((?:\p{Extended_Pictographic}|\p{Regional_Indicator})(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator})*)\s*/u;
+// How long a dragged file has to rest on an agent before Herdr switches to it.
+const SPRING_MS = 600;
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
 // blocked. It's never done: it reports to its parent, and the parent's done is the news.
@@ -413,6 +415,24 @@ export default class Agents extends View {
         .when(s.id === on, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(14).flex_none().text_color(t.foreground)))));
   }
 
+  spring(a, cx) {
+    this.springTask?.cancel();
+    this.springing = a.address;
+    this.springTask = cx.timer.after(SPRING_MS, (cx) => {
+      if (this.springing !== a.address) return;
+      this.springing = null;
+      run("pane.focus", { pane: a.pane });
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  unspring(cx) {
+    this.springTask?.cancel();
+    this.springTask = null;
+    if (this.springing) { this.springing = null; cx.notify(); }
+  }
+
   peek(addr) {
     run("terminal.peek", { terminal: addr });
   }
@@ -557,13 +577,30 @@ export default class Agents extends View {
     const listKeys = this.handle.is_focused();
     const cursor = (this.filterOpen && filtering) || listKeys ? list[this.at]?.address : null;
 
+    // Holding a dragged file over an agent's row (or anything dragged in from
+    // another app) lights the row up and, after SPRING_MS, switches to that
+    // agent, like a spring-loaded folder in Finder. Moving off the row first
+    // cancels it. Letting go on the row switches too; nothing is typed.
+    const springy = (el, a) => el
+      .when(this.springing === a.address, (el) => el.bg(t.selected).border(1).border_color(t.accent))
+      .on_mouse_move((e, cx) => {
+        if (e.pressed_button === "left") {
+          if (this.springing !== a.address && !a.focused) this.spring(a, cx);
+        } else if (this.springing) this.unspring(cx);
+      })
+      .on_drop((_e, cx) => {
+        cx.stop_propagation();
+        this.unspring(cx);
+        run("pane.focus", { pane: a.pane });
+      });
+
     const row = (a, i, subs = []) => {
       const pic = icon(a.program, 16, t.foreground);
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       if (collapsed) {
-        return h_flex()
+        return springy(h_flex(), a)
           .id(`ag-${a.address}`)
           .h(26)
           .px(8)
@@ -571,6 +608,7 @@ export default class Agents extends View {
           .items_center()
           .gap(4)
           .hover((s) => s.bg(t.hover))
+          .on_hover((on, cx) => { if (!on && this.springing === a.address) this.unspring(cx); })
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
@@ -603,7 +641,7 @@ export default class Agents extends View {
       const em = (label(a) || "").match(EMOJI);
       if (em && name.startsWith(em[1])) name = name.slice(em[0].length) || name;
       const own = em && div().flex_none().w(16).text_size(14).child(em[1]);
-      return h_flex()
+      return springy(h_flex(), a)
         .id(`ag-${a.address}`)
         .px(8)
         .h(30)
@@ -618,6 +656,7 @@ export default class Agents extends View {
         .on_hover((on, cx) => {
           if (on) this.hovered = a.address;
           else if (this.hovered === a.address) this.hovered = null;
+          if (!on && this.springing === a.address) this.unspring(cx);
           cx.notify();
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
