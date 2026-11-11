@@ -30,6 +30,7 @@ To do it by hand, copy `layouts/drover.json` to `~/.config/herdr-app/layouts/`, 
 | ⌘\\ | Put the keyboard back in the tab's terminal |
 | ⌘⇧\\ | Filter the agent list: `[space]`, `is:blocked`, `@machine` or any text |
 | ⌘⇧B | Show or hide the spaces list |
+| ⌃⌘R | Resize the focused pane: ← and → step it through 1/4, 1/3, 1/2, 2/3 and 3/4 of its split, = makes the tab's panes even, Esc closes |
 
 The keys are for macOS only. On Linux or Windows, change `cmd` to `ctrl` and pick
 keys that don't clash with your terminal.

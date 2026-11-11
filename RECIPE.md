@@ -84,6 +84,7 @@ A 440 × 190 dialog on `popover`, 18 px padding: `Close tab "{name}"?` at 15 px 
 - **⌘⌥P** pins the shown tab's agent to the top of the agent lists, or unpins it: the focused terminal's agent, else the first agent in the tab. With no agent it says "Nothing to pin".
 - **⌘\\** puts the keyboard back in the shown tab's pane, from the agents list or anywhere in the sidebar.
 - **⌘⇧B** shows or hides the Spaces list, leaving the agents list the whole height.
+- **⌃⌘R** opens a 340 × 64 popup 40 px from the top, on `popover`: "Pane 1/2" at 13 px semibold `foreground` on the left, then key caps (radius 4, on `hover`) for ←, →, = with "even", and Esc, at 12 px `muted`. ← or `h` makes the focused pane the next smaller step of 1/4, 1/3, 1/2, 2/3 and 3/4, → or `l` the next larger one, and it stops at either end. `=` gives every pane in the tab the same size. Esc or Enter closes it. The commands `drover-pane-size.smaller`, `.larger` and `.even` do the same while it's open. With one pane in the tab it says "Nothing to resize" and closes.
 
 ## Built from
 
@@ -107,6 +108,7 @@ A 440 × 190 dialog on `popover`, 18 px padding: `Close tab "{name}"?` at 15 px 
   - `drover-reopen-tab`: popup 320 × 60, `at: "top"`, offset 40. Runs `space.select`, `terminal.keep {terminal, place: "tab"}`, `terminal.keep {place: "right"}`, `tab.rename`, `tab.move {id, index}` and `pane.focus {terminal}` through the `herdr-app do` command line, since it needs the new tab's id back.
   - `drover-pin-tab`: popup 1 × 1. Runs `terminal.pin {terminal, pinned}` and shows a 2 s toast ("Pinned" or "Unpinned").
   - `drover-focus-main`: popup 10 × 10 at the top. Runs `pane.focus {pane}`.
+  - `drover-pane-size`: popup 340 × 64, `at: "top"`, offset 40. Runs `layout.resize {id: <pane>, weight}`, which accepts a pane id and sets its weight within its split: the focused pane gets `share × others / (1 − share)` and every other pane in the tab gets 1. Each pane's last step is kept in `shared("drover-pane-size")`, since mods can't read a pane's size; a pane nobody stepped starts from 1/2.
 - **Keys** (`keys.json`), all in `global` except one:
 
   | Key | Action |
@@ -117,6 +119,7 @@ A 440 × 190 dialog on `popover`, 18 px padding: `Close tab "{name}"?` at 15 px 
   | `cmd-alt-p` | `mod.open:drover-pin-tab` |
   | `cmd-\` | `mod.open:drover-focus-main` |
   | `cmd-shift-b` | `layout.toggle:spaces` |
+  | `ctrl-cmd-r` | `mod.open:drover-pane-size` |
   | `cmd-shift-\` (in `layout:drover`) | `drover-agents.filter` |
 
 - **Shipped mods used**: `workspace-chrome` (the footer, and the icons `branch`, `monitor`, `server`, `plus`, `chevron-down`, `chevron-right`, `search`, `spinner`, `pin`, `pin-off`, `clock`, `layers` and `check` that `drover-spaces`, `drover-agents` and `drover-tabs` load from `mods/workspace-chrome/`), `pane` (the pane header and `mods/pane/close.svg`), `files` and `changes` (the panel and `mods/files/file.svg`, `mods/changes/changes.svg`), `workspace-status`, `menu`, `new-menu`, `picker`, `machine-add`, and `toast` for notifications.
@@ -136,6 +139,7 @@ A 440 × 190 dialog on `popover`, 18 px padding: `Close tab "{name}"?` at 15 px 
 - **The keys are macOS only** (`cmd-`). They sit in `global`, so ⌘T and ⌘W replace Herdr's `tab.new` and `tab.close` in every layout, and ⌘⇧B does nothing in a layout without a node named `spaces`. Merge them into the person's `keys.json` and ask before replacing keys they use.
 - **Dragging a tab to another space doesn't work.** The comment in `drover-tabs` says the spaces list reads `tab.drag` for that, but `drover-spaces` never reads it, and moving a tab to another space needs `tab.move` with `space`, which 0.1.12 doesn't have. Only reordering within a space works.
 - **The drag follows the pointer only over the tab bar.** `drover-tabs` checks for `on_window_mouse_move`, which released Herdr doesn't have, and falls back to the bar's own moves. A build doesn't need the window-wide branch.
+- **⌃⌘R is exact only for panes side by side.** Mods can't see how a tab is split, so the weights assume every pane in the tab shares one row or one column. In a nested split the sizes come out roughly right at best. If you drag a divider, the next step starts from the last size ⌃⌘R set, not from what you dragged to.
 - **Only ⌘W can be undone.** The tab's `×` and the tab menu's Close end the tab's terminals at once.
 - **A tab with both terminals and mod panes** (a file or board opened as a pane) keeps its mod panes after ⌘W, since only terminals are parked. The dialog lists a mod pane as "panel".
 - **Reopened tabs lose their split layout**: every terminal after the first comes back to the right of it.
@@ -146,7 +150,7 @@ A 440 × 190 dialog on `popover`, 18 px padding: `Close tab "{name}"?` at 15 px 
 
 ## Done when
 
-- `herdr-app check` passes for each of the nine `drover-*` mods, and `layout.switch {name: "drover"}` shows the sidebar (top row with no logo, Spaces, Agents, footer), the 47 px tab bar, the main panes and the status bar, with no errors in `herdr-app status`.
+- `herdr-app check` passes for each of the ten `drover-*` mods, and `layout.switch {name: "drover"}` shows the sidebar (top row with no logo, Spaces, Agents, footer), the 47 px tab bar, the main panes and the status bar, with no errors in `herdr-app status`.
 - A tab running Claude with the title "✳ fix login" reads "fix login" in the tab bar. A tab you named keeps its name.
 - Dragging the first tab past the second slides the second tab left, and releasing leaves the order swapped in `herdr-app ls`.
 - ⌘⇧\\ opens the filter. Typing `is:blocked` leaves only agents that need you, and `[` offers the space names; picking one turns it into a pill. Enter then ↓ moves the outline down the list, and Esc closes the filter and returns the keyboard to the pane.
@@ -155,3 +159,4 @@ A 440 × 190 dialog on `popover`, 18 px padding: `Close tab "{name}"?` at 15 px 
 - ⌘⌥P on a tab with an agent moves it under "Pinned" in the agents list; again, it moves back.
 - ⌘\\ from the filter puts the keyboard back in the terminal.
 - ⌘⇧B hides the Spaces list and shows it again.
+- In a tab split in two, ⌃⌘R then ← twice leaves the focused pane at a quarter of the width, and = evens it out again.

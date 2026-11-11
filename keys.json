@@ -5,7 +5,8 @@
     "cmd-shift-t": "mod.open:drover-reopen-tab",
     "cmd-alt-p": "mod.open:drover-pin-tab",
     "cmd-\\": "mod.open:drover-focus-main",
-    "cmd-shift-b": "layout.toggle:spaces"
+    "cmd-shift-b": "layout.toggle:spaces",
+    "ctrl-cmd-r": "mod.open:drover-pane-size"
   },
   "layout:drover": {
     "cmd-shift-\\": "drover-agents.filter"
