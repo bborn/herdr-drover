@@ -1,0 +1,1 @@
+{ "place": "none", "title": "New tab in the space's folder", "overlay": { "kind": "popup", "at": "top", "width": 10, "height": 10 } }

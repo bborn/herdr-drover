@@ -1,0 +1,1 @@
+{ "place": "none", "title": "Focus the main panel", "overlay": { "kind": "popup", "at": "top", "width": 10, "height": 10 } }
