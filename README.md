@@ -2,7 +2,7 @@
 
 A Herdr layout for running many agents at once. Unnamed tabs are called by the title
 the agent set (Claude's "✳ Fix the login redirect" reads "Fix the login redirect"),
-the sidebar holds your spaces above an agent list grouped by what needs you (hold a dragged file over an agent and it opens, like a folder in Finder), and a
+the sidebar holds your spaces above an agent list grouped by what needs you, and a
 handful of keys make tabs behave the way they do in a browser.
 
 ![Drover](preview.png)
