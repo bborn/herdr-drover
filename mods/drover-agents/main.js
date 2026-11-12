@@ -3,7 +3,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, nextCommand } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, nextCommand, exec, home, notify } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -42,6 +42,64 @@ function title(tab, l) {
 const EMOJI = /^((?:\p{Extended_Pictographic}|\p{Regional_Indicator})(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator})*)\s*/u;
 // How long a dragged file has to rest on an agent before Herdr switches to it.
 const SPRING_MS = 600;
+// How far an agent's row has to move before it's picked up to drop on another space.
+const LIFT_PX = 4;
+
+// Runs a command through the command line, which (unlike run) says what it made.
+async function doCmd(name, args) {
+  const r = await exec(`${home()}/.local/bin/herdr-app`, ["do", name, JSON.stringify(args)]);
+  try { return JSON.parse(r.stdout); } catch { return { error: r.stderr || r.stdout }; }
+}
+
+// Moves an agent's terminal to another space (an id) or a new one ("new"), as a
+// tab of its own, still running. The program keeps working in its own folder;
+// only where Herdr shows it changes. A terminal lives on one machine, so it
+// can only move between spaces on that machine.
+async function moveAgent(address, target, cx) {
+  const a = agents().find((x) => x.address === address);
+  if (!a || target === a.space) return;
+  const from = spaces().find((s) => s.id === a.space);
+  const tab = from?.tabs.find((t) => t.id === a.tab);
+  const keepName = tab?.named && tab.panes === 1 ? tab.name : null;
+  let to = target === "new" ? null : spaces().find((s) => s.id === target);
+  if (target !== "new" && !to) return;
+  if (to && (to.machine ?? null) !== (from?.machine ?? null)) {
+    notify({ title: "Can't move it there", body: `${to.name} is on ${to.machine ?? "this computer"}, and the agent runs on ${from?.machine ?? "this computer"}.`, level: "info", timeout: 4000 });
+    return;
+  }
+  let extra = null;
+  if (target === "new") {
+    const folder = panes().find((p) => p.pane === a.pane)?.cwd || from?.folder || "";
+    const made = await doCmd("space.new", { folder, machine: from?.machine ?? "" });
+    if (made.error || !made.space) {
+      notify({ title: "Couldn't make a space", body: made.error ?? "", level: "error" });
+      return;
+    }
+    to = { id: made.space };
+    extra = made.tab; // its starting shell, closed once the agent is in
+  }
+  const parked = await doCmd("terminal.park", { terminal: address });
+  if (parked.error) {
+    notify({ title: "Couldn't move the agent", body: parked.error, level: "error" });
+    return;
+  }
+  await doCmd("space.select", { id: to.id });
+  // Parking finishes in the background, so the terminal can't be kept until it has.
+  let kept = null;
+  for (let i = 0; i < 40; i++) {
+    kept = await doCmd("terminal.keep", { terminal: address, place: "tab" });
+    if (!kept.error) break;
+    await cx.sleep(100);
+  }
+  if (kept?.error) {
+    notify({ title: "Couldn't move the agent", body: `${kept.error}. It's still running; ⌘⇧T can't bring it back, but hc attach ${address} can.`, level: "error" });
+    return;
+  }
+  if (extra) await doCmd("tab.close", { id: extra, confirmed: true });
+  if (keepName && kept.tab) await doCmd("tab.rename", { id: kept.tab, name: keepName });
+  await doCmd("pane.focus", { terminal: address });
+  if (target === "new") await doCmd("space.rename", { id: to.id });
+}
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
 // blocked. It's never done: it reports to its parent, and the parent's done is the news.
@@ -211,6 +269,13 @@ export default class Agents extends View {
           this.filterOpen = true;
           this.filterInput.focus();
         } else if (c === "clear") this.clearFilter();
+        else if (c === "drop") {
+          // The spaces list took an agent dropped on one of its rows.
+          const d = shared("agent.drop");
+          setShared("agent.drop", null);
+          this.endAgentDrag();
+          if (d) moveAgent(d.address, d.space, cx);
+        }
         cx.notify();
       }
     });
@@ -415,6 +480,48 @@ export default class Agents extends View {
         .when(s.id === on, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(14).flex_none().text_color(t.foreground)))));
   }
 
+  // Pressing an agent's row arms a drag; moving LIFT_PX picks it up.
+  startAgentDrag(a, e) {
+    if (this.adrag?.lifted) setShared("agent.drag", null);
+    this.adrag = { address: a.address, space: a.space, y: e.position.y, lifted: false };
+    this.target = null;
+  }
+
+  trackAgentDrag(e, cx) {
+    const d = this.adrag;
+    if (!d) return;
+    // A move with no button held means it was let go somewhere this list never heard.
+    if ("pressed_button" in e && e.pressed_button == null) return this.endAgentDrag(cx);
+    if (!d.lifted && Math.abs(e.position.y - d.y) >= LIFT_PX) {
+      d.lifted = true;
+      const a = agents().find((x) => x.address === d.address);
+      const sp = spaces().find((s) => s.id === d.space);
+      setShared("agent.drag", { address: d.address, space: d.space, machine: sp?.machine ?? null, name: a?.tab_name || a?.title || "" });
+      cx.notify();
+    }
+  }
+
+  endAgentDrag(cx) {
+    if (this.adrag?.lifted) setShared("agent.drag", null);
+    this.adrag = null;
+    this.target = null;
+    cx?.notify();
+  }
+
+  dropAgent(cx) {
+    const d = this.adrag, target = this.target;
+    this.endAgentDrag(cx);
+    if (d?.lifted && target && target !== d.space) cx.spawn((cx) => moveAgent(d.address, target, cx));
+  }
+
+  // While an agent is lifted, the space under the pointer is where it would go.
+  aim(space, on, cx) {
+    if (!this.adrag?.lifted) return;
+    if (on) this.target = space;
+    else if (this.target === space) this.target = null;
+    cx.notify();
+  }
+
   spring(a, cx) {
     this.springTask?.cancel();
     this.springing = a.address;
@@ -584,6 +691,7 @@ export default class Agents extends View {
     const springy = (el, a) => el
       .when(this.springing === a.address, (el) => el.bg(t.selected).border(1).border_color(t.accent))
       .on_mouse_move((e, cx) => {
+        if (this.adrag) return;
         if (e.pressed_button === "left") {
           if (this.springing !== a.address && !a.focused) this.spring(a, cx);
         } else if (this.springing) this.unspring(cx);
@@ -594,6 +702,7 @@ export default class Agents extends View {
         run("pane.focus", { pane: a.pane });
       });
 
+    const lifted = this.adrag?.lifted ? this.adrag.address : null;
     const row = (a, i, subs = []) => {
       const pic = icon(a.program, 16, t.foreground);
       const more = detail.get(a.address);
@@ -651,9 +760,13 @@ export default class Agents extends View {
         .gap(9)
         .when(a.focused, (el) => el.bg(t.selected))
         .when(a.address === cursor, (el) => el.border(1).border_color(t.accent))
+        .when(lifted === a.address, (el) => el.opacity(0.4))
+        .when(Boolean(lifted) && this.target === a.space && a.space !== this.adrag?.space, (el) => el.bg(t.selected).border(1).border_color(t.accent))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
+        .on_mouse_down("left", (e) => this.startAgentDrag(a, e))
         .on_hover((on, cx) => {
+          this.aim(a.space, on, cx);
           if (on) this.hovered = a.address;
           else if (this.hovered === a.address) this.hovered = null;
           if (!on && this.springing === a.address) this.unspring(cx);
@@ -705,6 +818,8 @@ export default class Agents extends View {
         .text_color(t.muted ?? t.dim)
         .cursor_pointer()
         .hover((s) => s.text_color(t.foreground))
+        .when(Boolean(g.space) && Boolean(lifted) && this.target === g.members[0].space && g.members[0].space !== this.adrag?.space, (el) => el.rounded(8).bg(t.selected).border(1).border_color(t.accent))
+        .when(Boolean(g.space), (el) => el.on_hover((on, cx) => this.aim(g.members[0].space, on, cx)))
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
@@ -746,6 +861,11 @@ export default class Agents extends View {
             .justify_between()
             .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Agents"))
             .child(h_flex().gap(10).items_center()
+              .child(div().id("ag-space-new").text_color(t.dim)
+                .hover((s) => s.text_color(t.foreground))
+                .tooltip("New space")
+                .on_click(() => run("space.new"))
+                .child(svg("mods/workspace-chrome/plus.svg").size(14)))
               .child(div().id("ag-filter-open").text_size(11).text_color(this.filterOpen ? t.foreground : t.dim)
                 .hover((s) => s.text_color(t.foreground))
                 .tooltip("Filter agents (\u2318\u21e7\\)")
@@ -841,7 +961,20 @@ export default class Agents extends View {
       .when(!filtering && list.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("scrolling").children(rows))
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("scrolling")
+        .when(Boolean(lifted), (el) => el.cursor_grabbing())
+        .on_mouse_move((e, cx) => this.trackAgentDrag(e, cx))
+        .on_mouse_up("left", (_e, cx) => this.dropAgent(cx))
+        .children(rows)
+        // While an agent is lifted: drop it here to give it a space of its own.
+        .when(Boolean(lifted) && !collapsed, (el) => el.child(
+          h_flex().id("ag-new-space").mt(8).mb(8).h(34).flex_none().gap(7).items_center().justify_center().rounded(8)
+            .border(1).border_color(this.target === "new" ? t.accent : t.input)
+            .when(this.target === "new", (el) => el.bg(t.selected))
+            .text_size(12).text_color(this.target === "new" ? t.foreground : t.dim)
+            .on_hover((on, cx) => this.aim("new", on, cx))
+            .child(svg("mods/workspace-chrome/plus.svg").size(12))
+            .child("New space"))))
       .when(collapsed, (el) =>
         el.child(
           h_flex()

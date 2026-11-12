@@ -354,6 +354,8 @@ export default class Spaces extends View {
     const colors = shared("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+    const agent = shared("agent.drag");
+    const dropHere = Boolean(agent) && agent.space !== w.id && (agent.machine ?? null) === (w.machine ?? null);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -364,6 +366,8 @@ export default class Spaces extends View {
       .rounded(8)
       .when(on, (el) => el.bg(t.selected))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      // An agent dragged from the agents list can be dropped here, on its own machine.
+      .when(dropHere, (el) => el.hover((s) => s.bg(t.selected).border(1).border_color(t.accent)))
       .when(this.pressed === i && this.over !== i, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === i && this.pressed !== i, (el) => el.child(
         div().absolute().left(0).right(0).h(2).bg(t.accent)
@@ -383,6 +387,11 @@ export default class Spaces extends View {
         }
       })
       .on_mouse_up("left", (_e, cx) => {
+        if (dropHere) {
+          setShared("agent.drop", { address: agent.address, space: w.id });
+          run("drover-agents.drop");
+          return;
+        }
         const from = this.pressed;
         const over = this.over;
         this.pressed = null;
