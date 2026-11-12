@@ -78,25 +78,48 @@ async function moveAgent(address, target, cx) {
     to = { id: made.space };
     extra = made.tab; // its starting shell, closed once the agent is in
   }
+  // Each step is checked against what Herdr shows, since a reply can come
+  // before the change has landed. Nothing is closed until the agent is in.
+  // Which space and tab show the terminal now, read fresh from Herdr each time
+  // (panes() doesn't change while this task runs).
+  const where = async () => {
+    const r = await exec(`${home()}/.local/bin/herdr-app`, ["ls"]);
+    try {
+      for (const sp of JSON.parse(r.stdout).spaces) for (const t of sp.tabs)
+        if (t.terminals.some((x) => x.terminal === address)) return { space: sp.id, tab: t.id };
+    } catch {}
+    return null;
+  };
+  const until = async (ok, ms = 6000) => {
+    for (let t = 0; t < ms; t += 150) { if (await ok()) return true; await cx.sleep(150); }
+    return false;
+  };
+  const put = async (space) => {
+    await doCmd("space.select", { id: space });
+    for (let i = 0; i < 5; i++) {
+      const r = await doCmd("terminal.keep", { terminal: address, place: "tab" });
+      if (!r.error && await until(async () => (await where())?.space === space, 3000)) return true;
+      await cx.sleep(200);
+    }
+    return false;
+  };
   const parked = await doCmd("terminal.park", { terminal: address });
-  if (parked.error) {
-    notify({ title: "Couldn't move the agent", body: parked.error, level: "error" });
+  if (parked.error || !(await until(async () => !(await where())))) {
+    notify({ title: "Couldn't move the agent", body: parked.error ?? "It didn't leave its tab.", level: "error" });
     return;
   }
-  await doCmd("space.select", { id: to.id });
-  // Parking finishes in the background, so the terminal can't be kept until it has.
-  let kept = null;
-  for (let i = 0; i < 40; i++) {
-    kept = await doCmd("terminal.keep", { terminal: address, place: "tab" });
-    if (!kept.error) break;
-    await cx.sleep(100);
-  }
-  if (kept?.error) {
-    notify({ title: "Couldn't move the agent", body: `${kept.error}. It's still running; ⌘⇧T can't bring it back, but hc attach ${address} can.`, level: "error" });
+  if (!(await put(to.id))) {
+    // Back where it was, so it never ends up in no tab at all.
+    const back = from && spaces().some((s) => s.id === from.id) && (await put(from.id));
+    notify({ title: "Couldn't move the agent", body: back ? `It's back in ${from.name}.` : `It's still running but has no tab. Run: herdr-app do terminal.keep '{"terminal":"${address}","place":"tab"}'`, level: "error" });
+    if (extra) await doCmd("tab.close", { id: extra, confirmed: true });
     return;
   }
+  const tabNow = (await where())?.tab;
   if (extra) await doCmd("tab.close", { id: extra, confirmed: true });
-  if (keepName && kept.tab) await doCmd("tab.rename", { id: kept.tab, name: keepName });
+  // Herdr names a kept terminal's new tab after its program ("Claude Code");
+  // an empty name puts it back to the agent's own title, unless it had a name.
+  if (tabNow) await doCmd("tab.rename", { id: tabNow, name: keepName ?? "" });
   await doCmd("pane.focus", { terminal: address });
   if (target === "new") await doCmd("space.rename", { id: to.id });
 }
@@ -483,7 +506,7 @@ export default class Agents extends View {
   // Pressing an agent's row arms a drag; moving LIFT_PX picks it up.
   startAgentDrag(a, e) {
     if (this.adrag?.lifted) setShared("agent.drag", null);
-    this.adrag = { address: a.address, space: a.space, y: e.position.y, lifted: false };
+    this.adrag = { address: a.address, space: a.space, y: e.position.y, grab: e.local_position?.y ?? 15, lifted: false };
     this.target = null;
   }
 
@@ -492,6 +515,9 @@ export default class Agents extends View {
     if (!d) return;
     // A move with no button held means it was let go somewhere this list never heard.
     if ("pressed_button" in e && e.pressed_button == null) return this.endAgentDrag(cx);
+    d.at = e.local_position?.y;
+    d.height = e.bounds?.height;
+    if (d.lifted) cx.notify();
     if (!d.lifted && Math.abs(e.position.y - d.y) >= LIFT_PX) {
       d.lifted = true;
       const a = agents().find((x) => x.address === d.address);
@@ -840,7 +866,23 @@ export default class Agents extends View {
       ? list.flatMap(withKids)
       : groups.flatMap((g, gi) => [header(g, gi), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
 
+    // The lifted agent follows the pointer as a copy of its row, saying where it would go.
+    const ghost = () => {
+      const d = this.adrag, a = all.find((x) => x.address === d.address);
+      const where = this.target === "new" ? "New space" : this.target ? spaces().find((s) => s.id === this.target)?.name : null;
+      const top = Math.max(0, Math.min((d.height ?? 400) - 32, (d.at ?? 0) - d.grab));
+      return h_flex().id("ag-ghost").absolute().left(8).right(8).top(top).h(32).px(10).gap(8).items_center().rounded(8)
+        .bg(t.raised).border(1).border_color(where ? t.accent : t.border).shadow_lg().opacity(0.95)
+        .when(Boolean(a), (el) => el.child(spaceIcon(t, a.space_name, 16)))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(a ? (label(a) || a.title || a.program?.name || "") : ""))
+        .child(div().flex_none().text_size(11).text_color(where ? t.foreground : t.dim).child(where ? `\u2192 ${where}` : "Drop on a space"));
+    };
+
     return v_flex()
+      .relative()
+      .when(Boolean(lifted), (el) => el.cursor_grabbing())
+      .on_mouse_move((e, cx) => this.trackAgentDrag(e, cx))
+      .on_mouse_up("left", (_e, cx) => this.dropAgent(cx))
       .size_full()
       .min_h(0)
       .bg(t.chrome)
@@ -962,9 +1004,6 @@ export default class Agents extends View {
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("scrolling")
-        .when(Boolean(lifted), (el) => el.cursor_grabbing())
-        .on_mouse_move((e, cx) => this.trackAgentDrag(e, cx))
-        .on_mouse_up("left", (_e, cx) => this.dropAgent(cx))
         .children(rows)
         // While an agent is lifted: drop it here to give it a space of its own.
         .when(Boolean(lifted) && !collapsed, (el) => el.child(
@@ -991,6 +1030,7 @@ export default class Agents extends View {
                 .child("»"),
             ),
         ),
-      );
+      )
+      .when(Boolean(lifted) && !collapsed && this.adrag?.at != null, (el) => el.child(ghost()));
   }
 }
