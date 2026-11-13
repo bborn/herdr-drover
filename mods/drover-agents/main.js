@@ -697,18 +697,56 @@ export default class Agents extends View {
       pinned.splice(0, pinned.length, ...pinned.filter(keep));
       rest.splice(0, rest.length, ...rest.filter(keep));
     }
-    this.visible = list;
+    // Groups in list order: spaces (grouped) or priority sections. Agents of a
+    // space are next to each other in agents(), so neighbours make a group.
+    const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned, plain: [] }] : [];
+    for (const a of rest) {
+      const r = rankOf(a) || RANK.idle;
+      const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
+      if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
+      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", space: !byPriority, status: byPriority ? SECTION_STATUS[r] : null, sid: a.space, members: [a], plain: [] });
+    }
+
+    // Tabs with no agent in them get a plain row too, under their space (or in a
+    // last section when sorted by priority), so every tab can be reached from here.
+    // Put-away tabs stay hidden, as they do everywhere else.
+    const agentTabs = new Set(agents().map((a) => a.tab));
+    const allPanes = panes();
+    let plain = spaces().flatMap((sp) => sp.tabs.filter((tb) => !tb.settled && !agentTabs.has(tb.id)).map((tb) => {
+      const l = lead(tb, allPanes);
+      if (!l) return null;
+      const name = title(tb, l);
+      return { plain: true, address: tb.id, pane: l.pane, tab: tb.id, space: sp.id, space_name: sp.name, program: l.program, focused: sp.active && tb.active, status: null,
+        title: /^\d+$/.test(name) ? l.program?.name || name : name };
+    }).filter(Boolean));
+    if (filtering) plain = q.statuses.length || q.pinned === true ? [] : plain.filter((x) => this.matches(x, q, x.title));
+    if (!collapsed) {
+      if (byPriority) {
+        if (plain.length) groups.push({ id: "sec-tabs", label: "Other tabs", status: null, members: [], plain });
+      } else {
+        for (const x of plain) {
+          let g = groups.find((g) => g.id === `sp-${x.space}`);
+          if (!g) groups.push((g = { id: `sp-${x.space}`, label: x.space_name || "", space: true, sid: x.space, status: null, members: [], plain: [] }));
+          g.plain.push(x);
+        }
+        const order = spaces().map((sp) => sp.id);
+        const pos = (g) => (g.id === "pinned" ? -1 : order.indexOf(g.sid));
+        groups.sort((x, y) => pos(x) - pos(y));
+      }
+    }
+    // Arrows walk the rows in the order they're drawn, plain tabs included.
+    this.visible = collapsed ? list : groups.flatMap((g) => [...g.members, ...g.plain]);
     this.suggestions = this.filterOpen ? this.suggest(agents()) : [];
     this.sugAt = Math.min(this.sugAt, Math.max(0, this.suggestions.length - 1));
     // After a chip is completed, the highlight stays on the agent it was on.
     if (this.keep) {
-      const i = list.findIndex((a) => a.address === this.keep);
+      const i = this.visible.findIndex((a) => a.address === this.keep);
       if (i >= 0) this.at = i;
       this.keep = null;
     }
-    this.at = Math.min(this.at, Math.max(0, list.length - 1));
+    this.at = Math.min(this.at, Math.max(0, this.visible.length - 1));
     const listKeys = this.handle.is_focused();
-    const cursor = (this.filterOpen && filtering) || listKeys ? list[this.at]?.address : null;
+    const cursor = (this.filterOpen && filtering) || listKeys ? this.visible[this.at]?.address : null;
 
     // Holding a dragged file over an agent's row (or anything dragged in from
     // another app) lights the row up and, after SPRING_MS, switches to that
@@ -817,15 +855,23 @@ export default class Agents extends View {
         .child(this.status(t, a, byPriority && !isPinned));
     };
 
-    // Groups in list order: spaces (grouped) or priority sections. Agents of a
-    // space are next to each other in agents(), so neighbours make a group.
-    const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
-    for (const a of rest) {
-      const r = rankOf(a) || RANK.idle;
-      const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
-      if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
-      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", space: !byPriority, status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
-    }
+
+    // A tab with no agent: its program's icon and title, dimmer than an agent's row.
+    const plainRow = (x) => h_flex()
+      .id(`tab-${x.address}`)
+      .px(8)
+      .h(30)
+      .flex_none()
+      .rounded(8)
+      .items_center()
+      .gap(9)
+      .when(x.focused, (el) => el.bg(t.selected))
+      .when(x.address === cursor, (el) => el.border(1).border_color(t.accent))
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .on_click(() => run("pane.focus", { pane: x.pane }))
+      .child(icon(x.program, 16, t.dim) ?? div().w(16).flex_none())
+      .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(byPriority ? `${x.space_name} \u00b7 ${x.title}` : x.title));
 
     // A group's header; it folds the group. Folded, it says how many and the most urgent state.
     // Every group after the first gets a hairline above it, so spaces read as blocks.
@@ -844,15 +890,15 @@ export default class Agents extends View {
         .text_color(t.muted ?? t.dim)
         .cursor_pointer()
         .hover((s) => s.text_color(t.foreground))
-        .when(Boolean(g.space) && Boolean(lifted) && this.target === g.members[0].space && g.members[0].space !== this.adrag?.space, (el) => el.rounded(8).bg(t.selected).border(1).border_color(t.accent))
-        .when(Boolean(g.space), (el) => el.on_hover((on, cx) => this.aim(g.members[0].space, on, cx)))
+        .when(Boolean(g.space) && Boolean(lifted) && this.target === g.sid && g.sid !== this.adrag?.space, (el) => el.rounded(8).bg(t.selected).border(1).border_color(t.accent))
+        .when(Boolean(g.space), (el) => el.on_hover((on, cx) => this.aim(g.sid, on, cx)))
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
         })
         .when(Boolean(g.space), (el) => el.child(spaceIcon(t, g.label, 16)))
         .child(div().truncate().text_color(t[g.status] ?? t.foreground).child(g.label))
-        .when(byPriority || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
+        .when(byPriority || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length + g.plain.length))))
         .child(div().flex_1())
         .when(!open, (el) => el
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
@@ -864,7 +910,7 @@ export default class Agents extends View {
     };
     const rows = collapsed
       ? list.flatMap(withKids)
-      : groups.flatMap((g, gi) => [header(g, gi), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+      : groups.flatMap((g, gi) => [header(g, gi), ...(this.folded.has(g.id) ? [] : [...g.members.flatMap(withKids), ...g.plain.map(plainRow)])]);
 
     // The lifted agent follows the pointer as a copy of its row, saying where it would go.
     const ghost = () => {
@@ -997,7 +1043,7 @@ export default class Agents extends View {
                 .when(Boolean(hint(n)), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(hint(n)))))),
         );
       })
-      .when(filtering && list.length === 0 && !collapsed, (el) =>
+      .when(filtering && this.visible.length === 0 && !collapsed, (el) =>
         el.child(div().px(16).py(6).text_size(12).text_color(t.dim).child("No agents match.")),
       )
       .when(!filtering && list.length === 0 && !collapsed, (el) =>
