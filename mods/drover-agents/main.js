@@ -506,7 +506,7 @@ export default class Agents extends View {
   // Pressing an agent's row arms a drag; moving LIFT_PX picks it up.
   startAgentDrag(a, e) {
     if (this.adrag?.lifted) setShared("agent.drag", null);
-    this.adrag = { address: a.address, space: a.space, y: e.position.y, grab: e.local_position?.y ?? 15, lifted: false };
+    this.adrag = { address: a.address, space: a.space, tab: a.tab, y: e.position.y, grab: e.local_position?.y ?? 15, lifted: false };
     this.target = null;
   }
 
@@ -531,13 +531,30 @@ export default class Agents extends View {
     if (this.adrag?.lifted) setShared("agent.drag", null);
     this.adrag = null;
     this.target = null;
+    this.over = null;
     cx?.notify();
   }
 
   dropAgent(cx) {
-    const d = this.adrag, target = this.target;
+    const d = this.adrag, target = this.target, over = this.over;
     this.endAgentDrag(cx);
+    // Dropped on another tab's row in its own space: its tab takes that tab's place.
+    if (d?.lifted && over) {
+      const index = spaces().flatMap((s) => s.tabs).find((tb) => tb.id === over)?.index;
+      if (index) run("tab.move", { id: d.tab, index });
+      return;
+    }
     if (d?.lifted && target && target !== d.space) cx.spawn((cx) => moveAgent(d.address, target, cx));
+  }
+
+  // While an agent is lifted over another tab's row in its own space, that is
+  // where its tab would go. Only in the grouped view, where rows follow tab order.
+  aimRow(tab, space, on, cx) {
+    const d = this.adrag;
+    if (!d?.lifted) return;
+    if (on) this.over = sortOf().id === "grouped" && space === d.space && tab !== d.tab ? tab : null;
+    else if (this.over === tab) this.over = null;
+    cx.notify();
   }
 
   // While an agent is lifted, the space under the pointer is where it would go.
@@ -767,6 +784,10 @@ export default class Agents extends View {
       });
 
     const lifted = this.adrag?.lifted ? this.adrag.address : null;
+    // Where a dragged tab would land: a line under the row when moving down, over it when moving up.
+    const tabAt = new Map(spaces().flatMap((s) => s.tabs.map((tb) => [tb.id, tb.index])));
+    const dropLine = (el, tab) => ((tabAt.get(tab) ?? 0) > (tabAt.get(this.adrag?.tab) ?? 0)
+      ? el.rounded(0).border_b(2) : el.rounded(0).border_t(2)).border_color(t.accent);
     const row = (a, i, subs = []) => {
       const pic = icon(a.program, 16, t.foreground);
       const more = detail.get(a.address);
@@ -825,12 +846,14 @@ export default class Agents extends View {
         .when(a.focused, (el) => el.bg(t.selected))
         .when(a.address === cursor, (el) => el.border(1).border_color(t.accent))
         .when(lifted === a.address, (el) => el.opacity(0.4))
+        .when(Boolean(lifted) && this.over === a.tab, (el) => dropLine(el, a.tab))
         .when(Boolean(lifted) && this.target === a.space && a.space !== this.adrag?.space, (el) => el.bg(t.selected).border(1).border_color(t.accent))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
         .on_mouse_down("left", (e) => this.startAgentDrag(a, e))
         .on_hover((on, cx) => {
           this.aim(a.space, on, cx);
+          if (!isPinned) this.aimRow(a.tab, a.space, on, cx);
           if (on) this.hovered = a.address;
           else if (this.hovered === a.address) this.hovered = null;
           if (!on && this.springing === a.address) this.unspring(cx);
@@ -870,6 +893,8 @@ export default class Agents extends View {
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
       .on_click(() => run("pane.focus", { pane: x.pane }))
+      .on_hover((on, cx) => this.aimRow(x.tab, x.space, on, cx))
+      .when(Boolean(lifted) && this.over === x.tab, (el) => dropLine(el, x.tab))
       .child(icon(x.program, 16, t.dim) ?? div().w(16).flex_none())
       .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(byPriority ? `${x.space_name} \u00b7 ${x.title}` : x.title));
 
@@ -914,8 +939,8 @@ export default class Agents extends View {
 
     // The lifted agent follows the pointer as a copy of its row, saying where it would go.
     const ghost = () => {
-      const d = this.adrag, a = all.find((x) => x.address === d.address);
-      const where = this.target === "new" ? "New space" : this.target ? spaces().find((s) => s.id === this.target)?.name : null;
+      const d = this.adrag, a = agents().find((x) => x.address === d.address);
+      const where = this.over ? "Move here" : this.target === "new" ? "New space" : this.target && this.target !== d.space ? spaces().find((s) => s.id === this.target)?.name : null;
       const top = Math.max(0, Math.min((d.height ?? 400) - 32, (d.at ?? 0) - d.grab));
       return h_flex().id("ag-ghost").absolute().left(8).right(8).top(top).h(32).px(10).gap(8).items_center().rounded(8)
         .bg(t.raised).border(1).border_color(where ? t.accent : t.border).shadow_lg().opacity(0.95)
