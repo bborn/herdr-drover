@@ -2,7 +2,7 @@
 // A viewed done agent stays in Done until left.
 
 import { View, div, image, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, nextCommand, exec, home, notify } from "herdr";
 
 function find(node, id) {
@@ -261,6 +261,8 @@ export default class Agents extends View {
     this.sugAt = 0;
     // Enter in the filter hands the keyboard to the list itself, so the arrows walk agents.
     this.handle = cx.focus_handle();
+    // The list's scroll position, held here so a re-render can't drop it.
+    this.scroll = ScrollHandle.new();
     this.filterInput.on("change", (_e, cx) => {
       const v = this.filterInput.value();
       if (v !== this.filterText) { this.at = 0; this.sugAt = openChip(v)?.kind === "bare" ? -1 : 0; }
@@ -1074,7 +1076,7 @@ export default class Agents extends View {
       .when(!filtering && list.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("scrolling")
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("scrolling").track_scroll(this.scroll)
         .children(rows)
         // While an agent is lifted: drop it here to give it a space of its own.
         .when(Boolean(lifted) && !collapsed, (el) => el.child(
