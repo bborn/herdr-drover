@@ -506,6 +506,13 @@ export default class Agents extends View {
   }
 
   // Pressing an agent's row arms a drag; moving LIFT_PX picks it up.
+  // Right-click: Herdr's own tab menu (rename, new tab, close) for the row's tab.
+  menu(a, cx) {
+    cx?.stop_propagation();
+    if (!a?.tab) return;
+    openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: a.tab, space: a.space } } });
+  }
+
   startAgentDrag(a, e) {
     if (this.adrag?.lifted) setShared("agent.drag", null);
     this.adrag = { address: a.address, space: a.space, tab: a.tab, y: e.position.y, grab: e.local_position?.y ?? 15, lifted: false };
@@ -806,6 +813,7 @@ export default class Agents extends View {
           .hover((s) => s.bg(t.hover))
           .on_hover((on, cx) => { if (!on && this.springing === a.address) this.unspring(cx); })
           .on_click(() => run("pane.focus", { pane: a.pane }))
+          .on_mouse_down("right", (_e, cx) => this.menu(a, cx))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
@@ -853,6 +861,7 @@ export default class Agents extends View {
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
         .on_mouse_down("left", (e) => this.startAgentDrag(a, e))
+        .on_mouse_down("right", (_e, cx) => this.menu(a, cx))
         .on_hover((on, cx) => {
           this.aim(a.space, on, cx);
           if (!isPinned) this.aimRow(a.tab, a.space, on, cx);
@@ -895,6 +904,7 @@ export default class Agents extends View {
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
       .on_click(() => run("pane.focus", { pane: x.pane }))
+      .on_mouse_down("right", (_e, cx) => this.menu(x, cx))
       .on_hover((on, cx) => this.aimRow(x.tab, x.space, on, cx))
       .when(Boolean(lifted) && this.over === x.tab, (el) => dropLine(el, x.tab))
       .child(icon(x.program, 16, t.dim) ?? div().w(16).flex_none())
